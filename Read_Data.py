@@ -1,8 +1,6 @@
 import numpy as np
 import pandas as pd
-
-
-# from nltk.corpus import stopwords
+import nltk
 
 # read the csv files and figure out what to do with them
 # raw_data = pd.read_csv('SpICE data/spice_voicesauce_raw.csv')
@@ -13,6 +11,7 @@ import pandas as pd
 # need to read the annotation data from the text_grid
 # from raw data file, looks like an array with item[0] correpsonding to the first answer
 # they have annotations there, do they have the questions?
+
 
 # write parser to parse textgrid into a pandas of each tier and
 class ParsedTextgrid:
@@ -179,13 +178,3 @@ class Interval:
                 break
         # print(text)
         return text
-
-
-# test
-parsed_t = ParsedTextgrid('Prat data/interview_textgrids_iu_and_cs_intervals/VF19A_English_I1_20181114.TextGrid')
-print(parsed_t.get_x_min_max())
-print(parsed_t.get_tier_num())
-print(parsed_t.get_tiers()[2].get_name())
-for i in parsed_t.get_tiers()[2].get_intervals():
-    print(i.get_text())
-print(parsed_t.get_textgrid().readline())
