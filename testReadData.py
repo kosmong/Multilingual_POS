@@ -36,11 +36,14 @@ FILES = ["VF19A_English_I1_20181114.TextGrid",
          "VM25A_English_I1_20190923.TextGrid",
          "VM25B_English_I1_20200224.TextGrid",
          "VM34A_English_I2_20191028.TextGrid"]
+
+
 class MyTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.filenames = []
         for file in FILES:
             self.filenames.append(PATH + file)
+
     def test_tier_interval_nums(self):
         # test
         for filename in self.filenames:
