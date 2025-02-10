@@ -2,7 +2,6 @@ import Read_Data as rd
 import pandas as pd
 import nltk
 
-
 CSV_FOLDER = "Prat data/tagged_interviews_csv/"
 TEXTGRID_FOLDER = "Prat data/interview_textgrids_iu_and_cs_intervals/"
 FILES_NAMES = ["VF19A_English_I1_20181114",
@@ -41,46 +40,36 @@ FILES_NAMES = ["VF19A_English_I1_20181114",
                "VM34A_English_I2_20191028"]
 
 
+# REQUIRES: the symbol always signify a disfluency and never appears by itself
+# might be better to make own tokenizer
+def recombine(tokens, symbols):
+    to_pop = []
+    for i in range(len(tokens)):
+        if tokens[i] in symbols:
+            tokens[i] = tokens[i] + tokens[i + 1]
+            to_pop.append(i + 1)
+
+    for p in range(len(to_pop)):
+        # have to account for shrinking array of tokens
+        # the position in the earlier will always be smaller
+        # as we remove an element from the left, the index for right elements-1
+        # p is the number of elements we have already popped
+        tokens.pop(to_pop[p] - p)
+
+    return tokens
+
+
 def POS_sentence(sentence: str):
     stop_words = nltk.corpus.stopwords.words('english')
     stop_words = set(stop_words)
     stop_words.add('mmm')
     tokens = nltk.word_tokenize(sentence)
+    # recombine &, @ and the utterance right after
+    tokens = recombine(tokens, ["&", "@", "＠"])
     cleaned = [w for w in tokens if w not in stop_words]
     cleaned_tagged = nltk.pos_tag(cleaned)
     tagged = nltk.pos_tag(tokens)
     return tagged, cleaned_tagged
-
-
-# test out how nltk work
-simple_eng = "I went to the mall."
-tagged_eng, cleaned_eng = POS_sentence(simple_eng)
-
-# test for canto
-simple_canto = "古箏"
-tagged_simple, cleaned_simple = POS_sentence(simple_canto)
-
-# test for code switched sentence
-csw_sen = 'i like learned 古箏 for like a while'
-tagged_csw, cleaned_csw = POS_sentence(csw_sen)
-csw_wrds, csw_tags = zip(*tagged_csw)
-csw_df = pd.DataFrame({'POS tags': csw_tags, 'Word tokens': csw_wrds})
-
-csw_sen2 = 'they had this 古箏 teacher that volunteered to like teach us'
-tagged_csw2, cleaned_csw2 = POS_sentence(csw_sen2)
-csw_a2, csw_b2 = zip(*tagged_csw2)
-csw2_df = pd.DataFrame({'POS tags': csw_a2, 'Word tokens': csw_b2})
-df = pd.concat([csw_df, csw2_df])
-
-longer_sen = ("mmm oh i also learned the 古箏 like yeah. "
-              "i don't know like i was like just putting it out there like just cuz we were on the topic and i was like i totally forgot yeah. "
-              "cuz at like temple they had like 古箏 like they had this 古箏 teacher that volunteered to like teach us so i learned 古箏 for a while i have 古箏 at home and like. "
-              "yeah it's like it's pretty fun actually um uh and any instrument that i want to play okay if i ever wanted to try something i'd probably try like the tuba or something. "
-              "just cuz like everything i've played was like strings related and stuff but i've never tried like like a wind instrument. "
-              "but i know also like controlling my breath is probably pretty hard cuz i don't know i know you have to have like the um embrasure or something like that. "
-              "for any like like those weird instruments but a tuba would be cool")
-tagged_long, cleaned_long = POS_sentence(longer_sen)
-a, b = zip(*tagged_long)
 
 
 # store the tagged parsed sentences in panda dataframe
@@ -101,12 +90,81 @@ def textgrid_into_csv(name: str, tier):
 
 
 # parse textgrid, store as dataframe, save as csv file
-for filename in FILES_NAMES:
-    path = TEXTGRID_FOLDER + filename + ".TextGrid"
-    parsed_textgrid = rd.ParsedTextgrid(path)
-    convenience_tier = parsed_textgrid.get_tiers()[2]
-    assert convenience_tier.get_name() == "convenience-IU"
-    textgrid_into_csv(filename, convenience_tier)
+# for filename in FILES_NAMES:
+#     path = TEXTGRID_FOLDER + filename + ".TextGrid"
+#     parsed_textgrid = rd.ParsedTextgrid(path)
+#     convenience_tier = parsed_textgrid.get_tiers()[2]
+#     assert convenience_tier.get_name() == "convenience-IU"
+#     textgrid_into_csv(filename, convenience_tier)
 
 
+# create a dataframe that has words and their POS tag as axis labels
+# 2D frame, increment when an instance of word with POS tag is seen
+# use it to calculate probabilities
+def make_count_df(labelled_df: pd.DataFrame, count_df: pd.DataFrame):
 
+    for row in labelled_df.itertuples():
+        pos_tag = row[1]
+        word = row[2]
+
+        # if already contains POS Word combo, increment count
+        # find row that contains the POS tag and word pair
+        found_i = count_df.loc[(count_df['POS tags'] == pos_tag) & (count_df['Words'] == word)].index
+        if found_i.empty:
+            count_df.loc[len(count_df)] = [pos_tag, word, 1]
+        else:
+            count_df.loc[found_i, 'Count'] = count_df.loc[found_i, 'Count'] + 1
+
+    return count_df
+
+# # make master count df
+# columns = ['POS tags', 'Words', 'Count']
+# m_count_df = pd.DataFrame(columns=columns)
+# for filename in FILES_NAMES:
+#     path = CSV_FOLDER + filename + ".csv"
+#     df = pd.read_csv(path)
+#     m_count_df = make_count_df(df, m_count_df)
+#
+# m_count_df.sort_values(by='Words', inplace=True, ascending=False)
+# m_count_df.to_csv(CSV_FOLDER + 'Master_Counts.csv')
+
+
+# test if sentences with no disfluencies get wrongly classified
+example_canto = "楊枝甘露 is delicious"
+tagged_ex, _ = POS_sentence(example_canto)
+print(tagged_ex)
+
+# I think this is correct
+tagged_canto2, _ = POS_sentence("my favourite is still 黑芝麻")
+tagged_eng, _ = POS_sentence("my favourite is still sesame")
+print(tagged_canto2)
+print(tagged_eng)
+
+
+# & means discontinuations, must stay with the next word (done)
+# check unique words and maybe hand tag
+# discontinuations and disfluencies: false start (&) um, ahhs, mmm
+# cantonese testing, where is the pos different?
+# @ sign for code-switching: language other than english or canto
+# @m: mandarin, @j: japanese, @ml: malay and @i: indonesian; 21a, 21c, 22a, 24a, 25a, 27a
+# what is @h? m25A
+
+# check where the modifiers for noun and adjective
+# 黑芝麻 is wrong F32A, maybe correct actually
+# Definitely wrong
+# 楊枝甘露 is labelled as verb F27A
+# this is also pre warned with can I speak in cantonese
+# In context, I understand why it is a verb;
+# 19b 2692: nihao
+
+# curious about read speech, no disfluencies, and spontaneous speech aspect
+# I think maybe the bigger problem is the spontaneous speech aspect!
+# need to compare read speech codeswitch to spontaneous speech codeswitch
+# help actually there is a lot of mislabelling
+
+# get disfluencies relabelled (mmm, umm, xxx)
+# how about repeated words?
+# how much does disfluencies and repeated words predict codeswitching??
+# Is it just normal disfliencies?
+# deep seek: how does that work
+# learning the data
