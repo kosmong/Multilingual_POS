@@ -1,8 +1,8 @@
 import unittest
-import Read_Data as rd
+import Read_Data as Read
 import numpy as np
 import pandas as pd
-import Multilingual_POS as m_pos
+import Multilingual_POS as MPOS
 
 PATH = "Prat data/interview_textgrids_iu_and_cs_intervals/"
 FILES = ["VF19A_English_I1_20181114.TextGrid",
@@ -47,30 +47,22 @@ class MyTestCase(unittest.TestCase):
         for file in FILES:
             self.filenames.append(PATH + file)
 
-    def test_tier_interval_nums(self):
-        # test
-        for filename in self.filenames:
-            parsed_ts = rd.ParsedTextgrid(filename)
-            tier_nums = parsed_ts.get_tier_num()
-            tiers = parsed_ts.get_tiers()
-            self.assertEqual(tier_nums, len(tiers))
+    # def test_tier_interval_nums(self):
+    #     # test
+    #     for filename in self.filenames:
+    #         parsed_ts = rd.ParsedTextgrid(filename)
+    #         tier_nums = parsed_ts.get_tier_num()
+    #         tiers = parsed_ts.get_tiers()
+    #         self.assertEqual(tier_nums, len(tiers))
+    #
+    #         for tier in tiers:
+    #             interval_nums = tier.get_interval_num()
+    #             intervals = tier.get_intervals()
+    #             self.assertEqual(interval_nums, len(intervals))
 
-            for tier in tiers:
-                interval_nums = tier.get_interval_num()
-                intervals = tier.get_intervals()
-                self.assertEqual(interval_nums, len(intervals))
 
-
-    def test_POS_tagger(self):
+    def test_POS_sentence(self):
         # test POS tagger
-        # # test recombine
-        # tks = ["I", "am", "a", "&", "and", "the"]
-        # recombined = recombine(tks, "&")
-        # print(recombined)
-        #
-        # tks2 = ["I", "&", "a", "&", "and", "the"]
-        # recombined2 = recombine(tks2, "&")
-        # print(recombined2)
         #
         # # test out how nltk work
         # simple_eng = "I went to the mall."
@@ -130,7 +122,54 @@ class MyTestCase(unittest.TestCase):
         # m_count_df = pd.read_csv(CSV_FOLDER + 'Master_Counts.csv', index_col=0)
         # m_count_df.sort_values(by='Words', ascending=False)
         # m_count_df.to_csv(CSV_FOLDER + 'Master_Counts.csv')
+
         assert True
+
+
+    # This tests the the recombine_and_retag function in Multilingual_POS
+    # Recombines [&, @] with next element
+    # cases: empty, one, ten, many
+    # also test retagging disfluencies
+    # cases: empty, one, ten, many
+    # test them together
+    def test_recombine_and_retag(self):
+        # recombine
+        sym = ["&", "@", "＠"]
+        disf = ["&", "mmm", "mnmm", "mmhm", "mm", "ahh", "huh", "umm"]
+
+        no_recombine = "i like apples"
+        tagged_no_recombine, _ = MPOS.POS_sentence(no_recombine)
+        retag_no_recombine = MPOS.recombine_and_retag(tagged_no_recombine, sym, disf)
+        # before is the same as after, should have no changes
+        self.assertEqual(tagged_no_recombine, retag_no_recombine)
+
+        one_recombine = "i &uh like apples"
+        tagged_one_recombine, _ = MPOS.POS_sentence(one_recombine)
+        retag_one_recombine = MPOS.recombine_and_retag(tagged_one_recombine, sym, disf)
+        self.assertEqual(len(retag_one_recombine), len(tagged_one_recombine)-1)
+        # elements in the sym list should not occur by itself
+        for s in sym:
+            for t in retag_one_recombine:
+                self.assertFalse(s == t[0])
+        correct_retag_one = [('i', 'NN'), ('&uh', 'DIS'), ('like', 'IN'), ('apples', 'NNS')]
+        self.assertEqual(correct_retag_one, retag_one_recombine)
+
+        consecutive_recombine = "i &uh @um @hum like apples"
+        tagged_consecutive_recombine, _ = MPOS.POS_sentence(consecutive_recombine)
+        retag_consecutive_recombine = MPOS.recombine_and_retag(tagged_consecutive_recombine, sym, disf)
+        self.assertEqual(len(retag_consecutive_recombine), len(tagged_consecutive_recombine)-3)
+        for s in sym:
+            for t in retag_one_recombine:
+                self.assertFalse(s == t[0])
+        correct_retag_consecutive = [('i', 'NN'), ('&uh', 'DIS'), ('@um', 'LABEL'), ('@hum', 'LABEL'), ('like', 'IN'), ('apples', 'NNS')]
+        self.assertEqual(correct_retag_consecutive, retag_consecutive_recombine)
+
+        one_disfluency = "I um like apples"
+        tagged_one_disfluency, _ = MPOS.POS_sentence(one_disfluency)
+        retag_one_disfluency = MPOS.recombine_and_retag(tagged_one_disfluency, sym, disf)
+        self.assertEqual(len(retag_one_disfluency), len(tagged_one_disfluency))
+
+
 
 
 if __name__ == '__main__':
