@@ -3,6 +3,7 @@ import pandas as pd
 import nltk
 import Read_Data as Read
 import Multilingual_POS as MPos
+from transformers import AutoTokenizer, AutoModelForTokenClassification, TokenClassificationPipeline
 
 # now need to add the pos tags as a Tier into the texrgrid
 # first take the textgrid, read it, change into the classes
@@ -11,9 +12,13 @@ HEADER = ["File type = \"ooTextFile\"\n",
           "Object class = \"TextGrid\"\n",
           "\n"]
 INDENT = "    "
+model_name = "QCRI/bert-base-multilingual-cased-pos-english"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForTokenClassification.from_pretrained(model_name)
+pipeline = TokenClassificationPipeline(model=model, tokenizer=tokenizer)
 
 
-def write_data(parsed: Read.ParsedTextgrid, filename: str) -> None:
+def write_data(parsed: Read.ParsedTextgrid, filename: str, tagger='nltk') -> None:
     """ This function takes a parsed text_grid with its pos tagged sentences
     and writes it to a text_grid file"""
     f = open(filename, "w")
@@ -34,12 +39,12 @@ def write_data(parsed: Read.ParsedTextgrid, filename: str) -> None:
         f.write("tiers? <exists> \n")
         f.write("size = " + str(tier_nums) + " \n")
         f.write("item []: \n")
-        write_tiers(f, parsed.get_tiers())
-        
+        write_tiers(f, parsed.get_tiers(), tagger)
+
     f.close()
 
 
-def write_tiers(f, tiers):
+def write_tiers(f, tiers, tagger='nltk'):
     """This function takes the tiers list and writes it into textgrid"""
     tier_num = 1
 
@@ -53,8 +58,8 @@ def write_tiers(f, tiers):
         f.write(INDENT + INDENT + f'intervals: size = {str(tier.get_interval_num())} \n')
 
         intervals = tier.get_intervals()
-        if tier.get_name() == "convenience-IU":
-            tag_intervals(intervals)
+        if tier.get_name() == "convenience-IU" or tier.get_name() == "IU":
+            tag_intervals(intervals, tagger)
 
         write_intervals(f, intervals)
         tier_num += 1
@@ -63,7 +68,7 @@ def write_tiers(f, tiers):
 def write_intervals(f, intervals):
     """This function takes the intervals list and writes them into textgrid"""
     interval_num = 1
-    
+
     for interval in intervals:
         f.write(INDENT + INDENT + f'intervals [{interval_num}]:\n')
         f.write(INDENT + INDENT + INDENT + f'xmin = {str(interval.get_x_min_max()[0])} \n')
@@ -73,14 +78,22 @@ def write_intervals(f, intervals):
         interval_num += 1
 
 
-def tag_intervals(intervals):
+def tag_intervals(intervals, tagger='nltk'):
     """This function takes the intervals list of convience-IU and changes the text to be POS tagged text"""
     sym = ["&", "@", "＠"]
     disf = ["&", "mmm", "mnmm", "mmhm", "mm", "ahh", "huh", "umm", "mhm", "um"]
+
     for interval in intervals:
         text = interval.get_text()
-        tagged, _ = MPos.POS_sentence(text)
-        cleaned = MPos.recombine_and_retag(tagged, sym, disf)
+
+        if tagger == 'huggingface':
+            tagged = pipeline(text)
+            cleaned = MPos.recombine_hugging(tagged)
+            # for entry in tagged:
+            #     cleaned.append((entry['word'], entry['entity']))
+        else:
+            tagged, _ = MPos.POS_sentence(text)
+            cleaned = MPos.recombine_and_retag(tagged, sym, disf)
 
         tagged_text = ""
         for pair in cleaned:

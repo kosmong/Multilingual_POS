@@ -9,6 +9,7 @@ import nltk
 CSV_FOLDER = "Prat data/tagged_interviews_csv/"
 TEXTGRID_FOLDER = "Prat data/interview_textgrids_iu_and_cs_intervals/"
 TAGGED_FOLDER = "Prat data/tagged_interviews_textgrid/"
+HUGGINGFACE_FOLDER = "Prat data/tagged_huggingface_textgrid/"
 FILES_NAMES = ["VF19A_English_I1_20181114",
                "VF19B_English_I1_20190213",
                "VF19C_English_I1_20190224",
@@ -49,14 +50,17 @@ print("xmin = " + str(min) + " ")
 
 
 # parsed = Read.ParsedTextgrid("Prat data/interview_textgrids_iu_and_cs_intervals/VF19A_English_I1_20181114.TextGrid")
-# write_data(parsed, filename="Prat data/tagged_interviews_textgrid/POS_VF19A_English_I1_20181114.TextGrid")
+# write_data(parsed, filename="Prat data/tagged_interviews_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid")
 
 
 def main():
     """read textgrid, add preliminary POS tagging into the convienience-UI tier, write textgrid"""
     for filename in FILES_NAMES:
         old_parsed = Read.ParsedTextgrid(TEXTGRID_FOLDER + filename + ".TextGrid")
+        # Write.write_data(old_parsed, HUGGINGFACE_FOLDER + "POS_hf_" + filename + ".TextGrid", 'huggingface')
         Write.write_data(old_parsed, TAGGED_FOLDER + "POS_" + filename + ".TextGrid")
+
+
 
 
 if __name__ == "__main__":

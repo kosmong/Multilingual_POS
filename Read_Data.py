@@ -119,10 +119,10 @@ def _parse_interval_num(textgrid):
 
     for line in textgrid:
         interval_num_pos = line.find(interval_num_str)
-        line_length = len(line) - 2
+        line_length = len(line)
 
         if interval_num_pos != -1:
-            interval_num = int(line[interval_num_pos + len(interval_num_str):line_length])
+            interval_num = int(line[interval_num_pos + len(interval_num_str):line_length].strip())
             break
     # print(interval_num)
     return interval_num
@@ -135,10 +135,10 @@ def _parse_tier_name(textgrid):
 
     for line in textgrid:
         name_pos = line.find(name_str)
-        line_length = len(line) - 3
+        line_length = len(line)
 
         if name_pos != -1:
-            name = line[name_pos + len(name_str):line_length]
+            name = line[name_pos + len(name_str):line_length].replace('\n', '').replace('\"', '').strip()
             break
     # print(name)
     return name
@@ -160,10 +160,10 @@ def _parse_text(textgrid):
 
     for line in textgrid:
         text_pos = line.find(text_string)
-        line_length = len(line) - 3
+        line_length = len(line)
 
         if text_pos != -1:
-            text = line[text_pos + len(text_string):line_length]
+            text = line[text_pos + len(text_string):line_length].replace('\n', '').replace('\"', '').strip()
             break
     # print(text)
     return text
@@ -179,15 +179,16 @@ def _parse_x(textgrid):
     x_max = None
 
     for line in textgrid:
+        # line = line.decode("ascii")
         xmin_pos = line.find(x_min_str)
         xmax_pos = line.find(x_max_str)
-        line_length = len(line) - 2
+        line_length = len(line)
 
         if xmin_pos != -1:
-            x_min = float(line[xmin_pos + x_min_strlen:line_length])
+            x_min = float(line[xmin_pos + x_min_strlen:line_length].strip())
 
         if xmax_pos != -1:
-            x_max = float(line[xmax_pos + x_max_strlen:line_length])
+            x_max = float(line[xmax_pos + x_max_strlen:line_length].strip())
 
         if x_min is not None and x_max is not None:
             break
