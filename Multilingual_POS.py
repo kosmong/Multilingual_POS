@@ -1,9 +1,12 @@
 import Read_Data as rd
 import pandas as pd
 import nltk
+import string
 from transformers import AutoTokenizer, AutoModelForTokenClassification, TokenClassificationPipeline
 
 CSV_FOLDER = "Prat data/tagged_interviews_csv/"
+lower = string.ascii_lowercase
+upper = string.ascii_uppercase
 
 
 # REQUIRES: the symbol always signify a disfluency and never appears by itself
@@ -59,7 +62,7 @@ def recombine_hugging(tagged_tokens):
         # thus, the pos that we need to remove is i-1 (previous)
         if "##" in word and prev_tag == tag:
             word = prev_word + word.replace("##", '')
-            to_pop.append(i-1)
+            to_pop.append(i - 1)
 
         cleaned.append((word, tag))
         prev_word = word
@@ -83,7 +86,7 @@ def POS_sentence(sentence: str):
     tokens = nltk.word_tokenize(sentence)
     # recombine &, @ and the utterance right after
     # TODO: uncomment after done or take out
-    # tokens = recombine_and_retag(tokens, ["&", "@", "＠"])
+    # tokens = recombine_and_retag(tokens, ["&  ", "@", "＠"])
     # relabelled disfluencies as DIS
     disfluencies = ["&", "mmm", "mnmm", "mmhm", "mm", "ahh", "huh", "umm"]
     cleaned = [w for w in tokens if w not in stop_words]
@@ -158,27 +161,153 @@ def make_csw_count(mcount_df: pd.DataFrame):
 # 1. the tokenizations are different for each, how do we compare?
 #           we can do regular expression matching? first find matching word,
 #           then find ends of () and get what is between
-# TODO: the file representations are invalid in the ones saved from prat? why? perhaps change encoding to utf-8
-def find_text_diff(model_generated:str, gold_standard:str):
+# TODO: file representations can be changed in pycharm
+def find_text_diff(model_generated: str, gold_standard: str):
     # first find number of words and if it is the same for both
     model_split = model_generated.split(') ')
-    golden_split = gold_standard.split(') ')
+    gold_split = gold_standard.split(') ')
     len_m = len(model_split)
-    len_g = len(golden_split)
-    print(len_m, len_g)
+    len_g = len(gold_split)
+
+    # TODO: uncomment below when testing each new corrected textgrids
+    # if len_m < len_g:
+    #     print(model_split, gold_split)
+    # return len_m < len_g
+    # assume that human tagged data will put words together such as names
+    # so will have less or equal words
+    if len_g > len_m:
+        raise UnexpectedTokenizationException(gold_split, model_split)
+
+    # turn the word and tag back into pairs
+    model_pairs = tagged_words_to_pairs(model_split)
+    gold_pairs = tagged_words_to_pairs(gold_split)
+    # print(model_pairs, gold_pairs)
+
+    # for each pair, compare word
+    # assume gold standard does not tokenize incorrectly
+    # TODO: we probably want to have a df to store the counts and also what words are split incorrectly
+    correct = 0
+    incorrect = 0
+    bad_split = 0
+    total_offset = 0
+    for i in range(len_g):
+        model_wrd = model_pairs[i + total_offset][0]
+        model_tag = model_pairs[i + total_offset][1]
+        gold_wrd = gold_pairs[i][0]
+        gold_tag = gold_pairs[i][1]
+        # if the word is the same, just compare tags
+        if model_wrd == gold_wrd:
+            # add to correct count
+            # TODO: account for subsets of POS. eg. NN such as NNP, NNS, etc
+            if model_tag == gold_tag:
+                correct += 1
+            elif (model_tag == "DIS" or model_tag == "UH") and gold_tag == "FW":
+                correct += 1
+            else:
+                incorrect += 1
+        # if model word is part of gold word, split is bad
+        # check word bf and after and if combined is same, then check tag
+        # else throw exception, missing word
+        elif model_wrd in gold_wrd:
+            bad_split += 1
+            # test if the word can be combined with word after
+            # check if the length is different
+            # TODO: behaviour might change when we compare hugginface, they split based on subwords
+            corrected_pair, offset = combine_adjacent(model_pairs, gold_pairs, i+total_offset, i)
+            total_offset += offset
+            next_wrd = corrected_pair[0]
+            next_tag = corrected_pair[1]
+            if next_wrd == gold_wrd:
+                if model_tag == gold_tag and next_tag == gold_tag:
+                    correct += 1
+                else:
+                    incorrect += 1
+            else:
+                raise MissingWordException(gold_wrd, model_wrd)
+        else:
+            raise MissingWordException(gold_wrd, "")
+
+    return correct, incorrect, bad_split
+
+    #     # TODO: if it is a code switch, how far before was the previous Dis? or Uh?
+    #     # TODO: evaluate tagging, does having more Dis or Uh or repeated words mess with tag accuracy?
+    #     # A different function
 
 
+def tagged_words_to_pairs(tagged_wrds: [str]):
+    pairs = []
+    for m_entry in tagged_wrds:
+        word = m_entry.split('(')[0]
+        pos_tag = m_entry.split('(')[1].replace(')', '')
+        pairs.append((word, pos_tag))
 
-model = rd.ParsedTextgrid('Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid')
-# gold = rd.ParsedTextgrid('/Users/kosmong/Desktop/Cogs 402/Multilingual_POS/Prat data/corrected_tagged_textgrid/old_POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid')
-gold = rd.ParsedTextgrid('Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid')
-model_generated = model.get_tiers()[2].get_intervals()[3].get_text()
-gold_standard = gold.get_tiers()[2].get_intervals()[3].get_text()
-print(model_generated, gold_standard)
-find_text_diff(model_generated, gold_standard)
+    return pairs
 
-# make a new multilevel conditional random field
-# with variable length features that detect, word, phrasal (NP, VP), sentence
+
+def combine_adjacent(model_pairs, gold_pairs, model_pos, gold_pos):
+    """takes in model_pairs and gold_pairs and the position that has the word that is weirdly tokenized
+    eg. "Hong Kong" vs "Hong", "Kong", assume first word matches
+    combine with adjacent words and also compare their tags if they are the same
+    Could also be multiple adjacent words, eg. "Hong", "Pu" "Long" -> "Hong Pu Long"
+    return the combined (word, tag) and offset
+    offset is how many words are combined, this is for when we continue checking the words, we skip over the combined words"""
+
+    gold_match = gold_pairs[gold_pos]
+    model_match = model_pairs[model_pos]
+    model_substring = model_match[0]
+    model_tag = model_match[1]
+    offset = 0
+    for i in range(model_pos + 1, len(model_pairs)):
+        # combine with next word and check if it matches gold
+        model_substring = model_substring + ' ' + model_pairs[i][0]
+        if model_tag != model_pairs[i][1]:
+            model_tag = model_tag + ' ' + model_pairs[i][1]
+        offset += 1
+
+        if model_substring == gold_match[0]:
+            return (model_substring, model_tag), offset
+        elif model_substring not in gold_match[0]:
+            break
+
+    return (model_substring, model_tag), -1
+
+
+## Exception classes
+class MissingWordException(Exception):
+    def __init__(self, gold_wrd, model_wrd):
+        self.gold_wrd = gold_wrd
+        self.model_wrd = model_wrd
+
+    def __str__(self):
+        if self.model_wrd == "":
+            return repr(f'Missing Word: {self.gold_wrd}')
+        else:
+            return repr(f'Missmatch Word: should be {self.gold_wrd}, instead {self.model_wrd}')
+
+
+class UnexpectedTokenizationException(Exception):
+    def __init__(self, gold_split, model_split):
+        self.gold_split = gold_split
+        self.model_split = model_split
+
+    # TODO: fix the new lines to the message
+    def __str__(self):
+        return repr(f'Unexpected tokenization difference: hand corrected version tokenized more. '
+                    f'gold: {self.gold_split}. model: {self.model_split}')
+
+# model = rd.ParsedTextgrid('Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid')
+# gold = rd.ParsedTextgrid('Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid')
+# model_generated = model.get_tiers()[2].get_intervals()[3].get_text()
+# gold_standard = gold.get_tiers()[2].get_intervals()[3].get_text()
+# print(model_generated, gold_standard)
+# find_text_diff(model_generated, gold_standard)
+# # count if the model ever have longer words than gold standard
+# model_IU = model.get_tiers()[2].get_intervals()
+# gold_IU = gold.get_tiers()[2].get_intervals()
+# gold_more = 0
+# for t in range(len(model_IU)):
+#     gold_more += find_text_diff(model_IU[t].get_text(), gold_IU[t].get_text())
+# print(gold_more)
 
 
 # # trying Hugging face
@@ -203,4 +332,3 @@ find_text_diff(model_generated, gold_standard)
 #     tagged_pairs.append((entry['entity'], entry['word']))
 #
 # print(tagged_pairs)
-

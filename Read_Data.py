@@ -16,7 +16,7 @@ import nltk
 
 # write parser to parse textgrid into a pandas of each tier and
 
-
+## TODO: Find out how to more safely open file: so maybe not just texgrid with open and read, use with
 class ParsedTextgrid:
     """ Parsed Textgrid Class:
         This class is the parsed textgrid

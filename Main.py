@@ -165,3 +165,8 @@ if __name__ == "__main__":
 # direct tl
 
 # send molly preliminary tagged
+
+# TODO:
+# how to combine different tokenized pos
+# make a new multilevel conditional random field
+# with variable length features that detect, word, phrasal (NP, VP), sentence

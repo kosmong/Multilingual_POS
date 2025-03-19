@@ -41,7 +41,7 @@ FILES = ["VF19A_English_I1_20181114.TextGrid",
          "VM34A_English_I2_20191028.TextGrid"]
 
 
-class MyTestCase(unittest.TestCase):
+class TestMPOS(unittest.TestCase):
     def setUp(self) -> None:
         self.filenames = []
         for file in FILES:
@@ -59,7 +59,6 @@ class MyTestCase(unittest.TestCase):
     #             interval_nums = tier.get_interval_num()
     #             intervals = tier.get_intervals()
     #             self.assertEqual(interval_nums, len(intervals))
-
 
     def test_POS_sentence(self):
         # test POS tagger
@@ -125,7 +124,6 @@ class MyTestCase(unittest.TestCase):
 
         assert True
 
-
     # This tests the the recombine_and_retag function in Multilingual_POS
     # Recombines [&, @] with next element
     # cases: empty, one, ten, many
@@ -146,7 +144,7 @@ class MyTestCase(unittest.TestCase):
         one_recombine = "i &uh like apples"
         tagged_one_recombine, _ = MPOS.POS_sentence(one_recombine)
         retag_one_recombine = MPOS.recombine_and_retag(tagged_one_recombine, sym, disf)
-        self.assertEqual(len(retag_one_recombine), len(tagged_one_recombine)-1)
+        self.assertEqual(len(retag_one_recombine), len(tagged_one_recombine) - 1)
         # elements in the sym list should not occur by itself
         for s in sym:
             for t in retag_one_recombine:
@@ -157,11 +155,12 @@ class MyTestCase(unittest.TestCase):
         consecutive_recombine = "i &uh @um @hum like apples"
         tagged_consecutive_recombine, _ = MPOS.POS_sentence(consecutive_recombine)
         retag_consecutive_recombine = MPOS.recombine_and_retag(tagged_consecutive_recombine, sym, disf)
-        self.assertEqual(len(retag_consecutive_recombine), len(tagged_consecutive_recombine)-3)
+        self.assertEqual(len(retag_consecutive_recombine), len(tagged_consecutive_recombine) - 3)
         for s in sym:
             for t in retag_one_recombine:
                 self.assertFalse(s == t[0])
-        correct_retag_consecutive = [('i', 'NN'), ('&uh', 'DIS'), ('@um', 'LABEL'), ('@hum', 'LABEL'), ('like', 'IN'), ('apples', 'NNS')]
+        correct_retag_consecutive = [('i', 'NN'), ('&uh', 'DIS'), ('@um', 'LABEL'), ('@hum', 'LABEL'), ('like', 'IN'),
+                                     ('apples', 'NNS')]
         self.assertEqual(correct_retag_consecutive, retag_consecutive_recombine)
 
         one_disfluency = "I um like apples"
@@ -169,7 +168,135 @@ class MyTestCase(unittest.TestCase):
         retag_one_disfluency = MPOS.recombine_and_retag(tagged_one_disfluency, sym, disf)
         self.assertEqual(len(retag_one_disfluency), len(tagged_one_disfluency))
 
+    def test_find_text_diff(self):
+        """Test the combine_and_retag function
+        case 1: gold > model, exception raised, usually gold standard should have shorter lengths if they are different
+        case 2a: gold < model and recombine matches, output should gold = model, model is recombined and it matches words of gold
+        case 2b: gold < model but recombine does not match, exception raised, words are different which should not occur
+        case 3: gold = model and there is no need for recombination"""
 
+        # case1: gold > model, exception raised, hand corrected has more tokenizing
+        case1_model_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong(NNP) um(DIS) i(PRP) well(CC)"
+        case1_gold_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) um(DIS) i(RB) well(RB)"
+        with self.assertRaises(MPOS.UnexpectedTokenizationException):
+            MPOS.find_text_diff(case1_model_sentence, case1_gold_sentence)
+        # MPOS.find_text_diff(case1_model_sentence, case1_gold_sentence)
+
+        # case2a: gold < model, need recombination, successful
+        case2a_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB)"
+        case2a_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC)"
+        correct2a, incorrect2a, bad_split2a = MPOS.find_text_diff(case2a_model_sentence, case2a_gold_sentence)
+        print(correct2a, incorrect2a, bad_split2a)
+        assert correct2a == 4
+        assert incorrect2a == 4
+        assert bad_split2a == 1
+
+        # case2amany: many successful
+        case2amany_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) long(JJ) ma(JJ) zhi(JJ)"
+        case2amany_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) long ma zhi(JJ)"
+        correct2amany, incorrect2amany, bad_split2amany = MPOS.find_text_diff(case2amany_model_sentence, case2amany_gold_sentence)
+        print(correct2amany, incorrect2amany, bad_split2amany)
+        assert correct2amany == 5
+        assert incorrect2amany == 4
+        assert bad_split2amany == 2
+
+        # case2b: gold < model, recombination finds word mismatch
+        case2b_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) pong(NN) la(NNP) um(DIS) i(RB) well(RB)"
+        case2b_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC)"
+        with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
+            MPOS.find_text_diff(case2b_model_sentence, case2b_gold_sentence)
+        exception2b = miss_wrd.exception
+        assert exception2b.model_wrd != ""
+
+        # case2bmany: many but one does not work, so should fail at the end
+        case2bmany_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) bing(NN) num(NN)"
+        case2bmany_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
+        with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
+            MPOS.find_text_diff(case2bmany_model_sentence, case2bmany_gold_sentence)
+        exception2bmany = miss_wrd.exception
+        assert "hong kong la" != exception2bmany.model_wrd
+        assert "bing" == exception2bmany.model_wrd
+
+        # case2c: missing a word to combine, exception thrown
+        case2c_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) ling(NN)"
+        case2c_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
+        with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
+            MPOS.find_text_diff(case2c_model_sentence, case2c_gold_sentence)
+        exceptionc = miss_wrd.exception
+        assert exceptionc.model_wrd == ""
+
+        # case3: no need for recombination
+        case3_model_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
+        case3_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
+        correct3, incorrect3, bad_split3 = MPOS.find_text_diff(case3_model_sentence, case3_gold_sentence)
+        assert correct3 == 9
+        assert incorrect3 == 0
+        assert bad_split3 == 0
+
+    def test_combine_adjacent(self):
+        """test combine_adjacent function
+        case 1: cannot recombine adjacent words, they do not match the word of gold standard
+        case 2: no need to recombine adjacent words. should not happen, as function should only be called if model word is a substring of gold word
+                TODO: do we need an exception for this?
+        case 3: recombination is a success! also tags matches, only 1 tag, also include multiple cont
+        case 4: recombination success but tags does not match, many tags"""
+
+        # case1: cannot find correct recombine
+        case1_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("pong", "NN")]
+        case1_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong", "NNP")]
+        case1_pos = 4
+        result1_pair, offset1 = MPOS.combine_adjacent(case1_mpairs, case1_gpairs, case1_pos, case1_pos)
+        print(result1_pair, offset1)
+        assert offset1 == -1
+
+        # case 2: no need to recombine
+        case2_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("kong", "NN")]
+        case2_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("kong", "NN")]
+        case2_pos = 4
+        result2_pair, offset2 = MPOS.combine_adjacent(case2_mpairs, case2_gpairs, case2_pos, case2_pos)
+        print(result2_pair, offset2)
+        assert offset2 == -1
+
+        # case3: successful recombination, correct tag
+        case3a_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("kong", "NN")]
+        case3a_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong", "NN")]
+        case3a_pos = 4
+        result3a_pair, offset3a = MPOS.combine_adjacent(case3a_mpairs, case3a_gpairs, case3a_pos, case3a_pos)
+        print(result3a_pair, offset3a)
+        assert case3a_gpairs[case3a_pos] == result3a_pair
+        assert offset3a == 1
+
+        case3b_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("kong", "NN"),
+                         ("la", "NN")]
+        case3b_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong la", "NN")]
+        case3b_pos = 4
+        result3b_pair, offset3b = MPOS.combine_adjacent(case3b_mpairs, case3b_gpairs, case3b_pos, case3b_pos)
+        print(result3b_pair, offset3b)
+        assert case3b_gpairs[case3b_pos] == result3b_pair
+        assert offset3b == 2
+
+        # successful recombination, incorrect tags
+        case4a_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NNP"), ("kong", "NN")]
+        case4a_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong", "NN")]
+        case4a_pos = 4
+        result4a_pair, offset4a = MPOS.combine_adjacent(case4a_mpairs, case4a_gpairs, case4a_pos, case4a_pos)
+        print(result4a_pair, offset4a)
+        assert case4a_gpairs[case4a_pos][0] == result4a_pair[0]
+        assert case4a_gpairs[case4a_pos][1] != result4a_pair[1]
+        assert offset4a == 1
+
+        case4b_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NNP"), ("kong", "NN"),
+                         ("la", "NN")]
+        case4b_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong la", "NN")]
+        case4b_pos = 4
+        result4b_pair, offset4b = MPOS.combine_adjacent(case4b_mpairs, case4b_gpairs, case4b_pos, case4b_pos)
+        print(result4b_pair, offset4b)
+        assert case4b_gpairs[case4b_pos][0] == result4b_pair[0]
+        assert case4b_gpairs[case4b_pos][1] != result4b_pair[1]
+        assert offset4b == 2
+
+        # TODO: add case of multiple recombinations needed
+        # TODO: add case of middle of recombination eg. "i(NN) was(VBP) in(IN) hong kong(NNP) for gon(NN) ba(NN) la(NN)"
 
 
 if __name__ == '__main__':
