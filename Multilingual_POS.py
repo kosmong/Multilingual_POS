@@ -1,22 +1,29 @@
+import numpy as np
+
 import Read_Data as rd
 import pandas as pd
 import nltk
 import string
 from transformers import AutoTokenizer, AutoModelForTokenClassification, TokenClassificationPipeline
+import sklearn_crfsuite
+from sklearn_crfsuite import metrics
 
 CSV_FOLDER = "Prat data/tagged_interviews_csv/"
 lower = string.ascii_lowercase
 upper = string.ascii_uppercase
+symbols = []
+# TODO more place names:
+PLACE_NAMES = ["hong kong", "vancouver", "toronto", "japan", "canada", "greater vancouver area", "tokyo", "nagano",
+               "hiroshima", "miyajima", "iwakuni", "osaka", "langara college", "mong kok", "ubc", "bcit", "sfu",
+               "montreal", "burnaby", "mcgill university", "mcgill", "ut", "china", "singapore", "ontario", "queens"]
 
 
 # REQUIRES: the symbol always signify a disfluency and never appears by itself
-# might be better to make own tokenizer
-# TODO: refactor so that it put the disfluencies together and recombine symbols
-# token will be tagged tokens, list of pairs (word, tag)
-# if it is &, combine with next word and change tag to DIS (dispfluencies)
-# if it is @, combine with next word and change tag to LABL (label)
-# if it is part of the disfluency list, change tag to DIS
 def recombine_and_retag(tagged_tokens, recombine, disfluencies):
+    """token will be tagged tokens, list of pairs (word, tag)
+    if it is &, combine with next word and change tag to DIS (dispfluencies)
+    if it is @, combine with next word and change tag to LABL (label)
+    if it is part of the disfluency list, change tag to DIS"""
     to_pop = []
     out_tagged = tagged_tokens.copy()
     for i in range(len(tagged_tokens)):
@@ -84,11 +91,6 @@ def POS_sentence(sentence: str):
     stop_words = set(stop_words)
     stop_words.add('mmm')
     tokens = nltk.word_tokenize(sentence)
-    # recombine &, @ and the utterance right after
-    # TODO: uncomment after done or take out
-    # tokens = recombine_and_retag(tokens, ["&  ", "@", "＠"])
-    # relabelled disfluencies as DIS
-    disfluencies = ["&", "mmm", "mnmm", "mmhm", "mm", "ahh", "huh", "umm"]
     cleaned = [w for w in tokens if w not in stop_words]
     cleaned_tagged = nltk.pos_tag(cleaned)
     tagged = nltk.pos_tag(tokens)
@@ -156,12 +158,8 @@ def make_csw_count(mcount_df: pd.DataFrame):
     return csw_df
 
 
-# TODO: need to make comparisons between the different textgrids
-# potential problems:
-# 1. the tokenizations are different for each, how do we compare?
-#           we can do regular expression matching? first find matching word,
-#           then find ends of () and get what is between
 # TODO: file representations can be changed in pycharm
+# TODO: find how far disfluency or repeated words is from a code switch
 def find_text_diff(model_generated: str, gold_standard: str):
     # first find number of words and if it is the same for both
     model_split = model_generated.split(') ')
@@ -169,10 +167,6 @@ def find_text_diff(model_generated: str, gold_standard: str):
     len_m = len(model_split)
     len_g = len(gold_split)
 
-    # TODO: uncomment below when testing each new corrected textgrids
-    # if len_m < len_g:
-    #     print(model_split, gold_split)
-    # return len_m < len_g
     # assume that human tagged data will put words together such as names
     # so will have less or equal words
     if len_g > len_m:
@@ -181,7 +175,6 @@ def find_text_diff(model_generated: str, gold_standard: str):
     # turn the word and tag back into pairs
     model_pairs = tagged_words_to_pairs(model_split)
     gold_pairs = tagged_words_to_pairs(gold_split)
-    # print(model_pairs, gold_pairs)
 
     # for each pair, compare word
     # assume gold standard does not tokenize incorrectly
@@ -190,99 +183,271 @@ def find_text_diff(model_generated: str, gold_standard: str):
     incorrect = 0
     bad_split = 0
     total_offset = 0
+    code_switch_count = 0
+    repeated_count = 0
+    disfluency_count = 0
+    prev_wrd = ""
+    prev_dis = ""
+    repeated_wrds = [str]
+    repeated_counts = [int]
+    code_switch_wrd = [str]
     for i in range(len_g):
-        model_wrd = model_pairs[i + total_offset][0]
-        model_tag = model_pairs[i + total_offset][1]
+        # first attempt to combine with adjacent word,
+        # if nothing needs to be combined, should just return the current word
         gold_wrd = gold_pairs[i][0]
         gold_tag = gold_pairs[i][1]
+        corrected_pair, offset = combine_adjacent(model_pairs, gold_pairs, i + total_offset, i)
+        total_offset += offset
+        model_wrd = corrected_pair[0].strip()
+        model_tag = corrected_pair[1].strip()
+
+        # offset == -1, that means the recombined pair does not match anything
+        if offset == -1:
+            raise MissingWordException(gold_wrd, model_wrd)
+        # offset > 0, that means recombination is needed and a bad split occurred
+        if offset > 0:
+            bad_split += 1
+
         # if the word is the same, just compare tags
         if model_wrd == gold_wrd:
-            # add to correct count
-            # TODO: account for subsets of POS. eg. NN such as NNP, NNS, etc
             if model_tag == gold_tag:
                 correct += 1
-            elif (model_tag == "DIS" or model_tag == "UH") and gold_tag == "FW":
+            elif is_subclass(model_tag, gold_tag):
                 correct += 1
             else:
                 incorrect += 1
         # if model word is part of gold word, split is bad
         # check word bf and after and if combined is same, then check tag
         # else throw exception, missing word
-        elif model_wrd in gold_wrd:
-            bad_split += 1
-            # test if the word can be combined with word after
-            # check if the length is different
-            # TODO: behaviour might change when we compare hugginface, they split based on subwords
-            corrected_pair, offset = combine_adjacent(model_pairs, gold_pairs, i+total_offset, i)
-            total_offset += offset
-            next_wrd = corrected_pair[0]
-            next_tag = corrected_pair[1]
-            if next_wrd == gold_wrd:
-                if model_tag == gold_tag and next_tag == gold_tag:
-                    correct += 1
-                else:
-                    incorrect += 1
-            else:
-                raise MissingWordException(gold_wrd, model_wrd)
+        # elif model_wrd in gold_wrd:
+        #     bad_split += 1
+        #     # test if the word can be combined with word after
+        #     # check if the length is different
+        #     # TODO: behaviour might change when we compare hugginface, they split based on subwords
+        #     if next_wrd == gold_wrd:
+        #         if next_tag == gold_tag:
+        #             correct += 1
+        #         elif is_subclass(next_tag, gold_tag):
+        #             correct += 1
+        #         else:
+        #             incorrect += 1
+        #     else:
+        #         print(gold_standard)
+        #         print(model_generated)
+        #         raise MissingWordException(gold_wrd, model_wrd)
         else:
-            raise MissingWordException(gold_wrd, "")
+            # print(gold_standard)
+            # print(model_generated)
+            raise MissingWordException(gold_wrd, model_wrd)
 
-    return correct, incorrect, bad_split
+        # handle counts of repeated words
+        # TODO: also handle if repeated wrd is phrase, very unlikely
+        # do not count if it is empty string
+        if model_wrd != "":
+            if model_wrd in repeated_wrds:
+                index = repeated_wrds.index(model_wrd)
+                repeated_counts[index] += 1
+            elif model_wrd == prev_wrd:
+                repeated_wrds.append(model_wrd)
+                repeated_counts.append(1)
+                repeated_count += 1
+        prev_wrd = model_wrd
 
-    #     # TODO: if it is a code switch, how far before was the previous Dis? or Uh?
-    #     # TODO: evaluate tagging, does having more Dis or Uh or repeated words mess with tag accuracy?
-    #     # A different function
+        # handle code switches
+        if not gold_wrd.isascii():
+            code_switch_count += 1
+            code_switch_wrd.append(gold_wrd)
+
+            # find if it co-occurs with repeated or disfluencies
+            if repeated_count != 0:
+                print(gold_wrd, (repeated_wrds[repeated_count - 1], repeated_counts[repeated_count - 1]))
+            if disfluency_count != 0:
+                print(gold_wrd, prev_dis)
+
+        # handle disfluencies
+        if gold_tag in ["DIS", "FW", "UH"]:
+            disfluency_count += 1
+            prev_dis = gold_wrd
+
+    if code_switch_count > 0:
+        print(code_switch_wrd)
+    return [correct, incorrect, bad_split, code_switch_count, repeated_count, disfluency_count]
 
 
 def tagged_words_to_pairs(tagged_wrds: [str]):
     pairs = []
     for m_entry in tagged_wrds:
-        word = m_entry.split('(')[0]
-        pos_tag = m_entry.split('(')[1].replace(')', '')
-        pairs.append((word, pos_tag))
+        entry = m_entry.split('(')
+        if len(entry) == 1:
+            e = entry[0].replace(" ", "")
+            if e == "":
+                pairs.append((e, e))
+            else:
+                raise MissingPOSTagException(e)
+        else:
+            word = entry[0]
+            pos_tag = entry[1].replace(')', '')
+            pairs.append((word, pos_tag))
 
     return pairs
 
 
-def combine_adjacent(model_pairs, gold_pairs, model_pos, gold_pos):
+def combine_adjacent(model_pairs, gold_pairs, model_pos: int, gold_pos: int):
     """takes in model_pairs and gold_pairs and the position that has the word that is weirdly tokenized
     eg. "Hong Kong" vs "Hong", "Kong", assume first word matches
     combine with adjacent words and also compare their tags if they are the same
     Could also be multiple adjacent words, eg. "Hong", "Pu" "Long" -> "Hong Pu Long"
     return the combined (word, tag) and offset
-    offset is how many words are combined, this is for when we continue checking the words, we skip over the combined words"""
+    offset is how many words are combined, this is for when we continue checking the words, we skip over the combined words
+    iff the word does not need combining, just return the original word"""
 
     gold_match = gold_pairs[gold_pos]
     model_match = model_pairs[model_pos]
     model_substring = model_match[0]
     model_tag = model_match[1]
     offset = 0
-    for i in range(model_pos + 1, len(model_pairs)):
-        # combine with next word and check if it matches gold
-        model_substring = model_substring + ' ' + model_pairs[i][0]
-        if model_tag != model_pairs[i][1]:
-            model_tag = model_tag + ' ' + model_pairs[i][1]
-        offset += 1
-
+    # stops when the word matches, or th
+    for i in range(model_pos, len(model_pairs)):
         if model_substring == gold_match[0]:
             return (model_substring, model_tag), offset
         elif model_substring not in gold_match[0]:
             break
+        # word is missing from
+        elif i + 1 >= len(model_pairs):
+            raise MissingWordException(gold_match[0], model_substring)
+
+        # combine with next word and check if it matches gold
+        model_substring = model_substring + ' ' + model_pairs[i + 1][0]
+        # after combining, check if model tag is the same as previous tag
+        if model_tag != model_pairs[i + 1][1]:
+            model_tag = '-1'
+        offset += 1
 
     return (model_substring, model_tag), -1
 
 
-## Exception classes
+def is_subclass(model_tag, gold_tag):
+    adj = ["JJ", "JJR", "JJS"]
+    noun = ["NN", "NNS", "NNP", "NNPS"]
+    pronoun = ["PRP", "PRP$"]
+    adv = ["RB", "RBR", "RBS"]
+    verb = ["VB", "VBD", "VBG", "VBN", "VBP", "VBZ"]
+    dis = ["DIS", "FW", "UH"]
+
+    return ((model_tag in adj and gold_tag in adj) or
+            (model_tag in noun and gold_tag in noun) or
+            (model_tag in pronoun and gold_tag in pronoun) or
+            (model_tag in adv and gold_tag in adv) or
+            (model_tag in verb and gold_tag in verb) or
+            (model_tag in dis and gold_tag in dis))
+
+
+# TODO: if it is a code switch, how far before was the previous Dis? or Uh?
+# TODO: evaluate tagging, does having more Dis or Uh or repeated words mess with tag accuracy?
+def find_code_switch(model_pairs):
+    code_switch_pos = []
+    for i in range(len(model_pairs)):
+        model_pair = model_pairs[i]
+        if model_pair[0].strip() not in lower and model_pair[0].strip() not in upper:
+            code_switch_pos.append(i)
+
+    return code_switch_pos
+
+
+def find_closest_csw(model_pairs, pos):
+    closest_csw_pos = np.inf
+    for i in range(len(model_pairs)):
+        pair = model_pairs[i]
+        if not pair[0].strip().isascii():
+            pos_diff = abs(pos - i)
+            closest_csw_pos = min(closest_csw_pos, pos_diff)
+
+    return closest_csw_pos
+
+
+def find_closest_dis(model_pairs, pos):
+    closest_dis_pos = np.inf
+    for i in range(len(model_pairs)):
+        pair = model_pairs[i]
+        if pair[1] in ["DIS", "FW", "UH"]:
+            pos_diff = abs(pos - i)
+            closest_dis_pos = min(closest_dis_pos, pos_diff)
+
+    return closest_dis_pos
+
+
+def find_closest_repeated(model_pairs, pos):
+    closest_repeat_pos = np.inf
+    prev_word = ""
+    for i in range(len(model_pairs)):
+        pair = model_pairs[i]
+        if pair[0] == prev_word and pair[1] != "":
+            pos_diff = abs(pos - i)
+            closest_repeat_pos = min(closest_repeat_pos, pos_diff)
+        prev_word = pair[0]
+
+    return closest_repeat_pos
+
+
+# TODO: the CRF for correction
+# 2 layers: first for recombining words such as place names
+#           second for correcting tagging
+# features are the same
+# input: sentences are pairs of (word, tag) from preliminary tagger
+# output: sentences are pairs of (word, tag) with corrected tags
+def word_features(tag_sentence, i):
+    wrd_tag_pair = tag_sentence[i]
+    word = wrd_tag_pair[0]
+    tag = wrd_tag_pair[1]
+    features = {
+        'word': word,
+        'tag': tag,
+        'is_first': i == 0,
+        'is_last': i == len(tag_sentence) - 1,
+        'is_place': word in PLACE_NAMES,
+        # prefix of the word
+        'prefix-1': "" if word == "" else word[0],
+        'prefix-2': "" if word == "" else word[:2],
+        'prefix-3': "" if word == "" else word[:3],
+        # suffix of the word
+        'suffix-1': "" if word == "" else word[-1],
+        'suffix-2': "" if word == "" else word[-2:],
+        'suffix-3': "" if word == "" else word[-3:],
+        # extracting previous word and tag
+        'prev_word': '' if i == 0 else tag_sentence[i - 1][0],
+        'prev_tag': '' if i == 0 else tag_sentence[i - 1][1],
+        # extracting next word and tag
+        'next_word': '' if i == len(tag_sentence) - 1 else tag_sentence[i + 1][0],
+        'next_tag': '' if i == len(tag_sentence) - 1 else tag_sentence[i + 1][1],
+        # disfluencies, code switches, repeated words
+        'is_code_switch': word.isascii(),
+        'distance_to_code_switch': find_closest_csw(tag_sentence, i),
+        'is_disfluency': tag in ["DIS", "FW", "UH"],
+        'distance_to_disfluency': find_closest_dis(tag_sentence, i),
+        'distance_to_repeated': find_closest_repeated(tag_sentence, i)
+    }
+
+    return features
+
+
+# test feature extractor
+# print(word_features([("", "")], 0))
+# r = word_features([("i", "NN"), ("like", "VPB"), ("um", "DIS"), ("um", "DIS"), ("apple", "NN")], 2)
+# print(r)
+
+
+# print("古箏".isascii())
+# print("@m".isascii())
+# print("&m".isascii())
+
+# Exception classes
 class MissingWordException(Exception):
     def __init__(self, gold_wrd, model_wrd):
         self.gold_wrd = gold_wrd
         self.model_wrd = model_wrd
 
     def __str__(self):
-        if self.model_wrd == "":
-            return repr(f'Missing Word: {self.gold_wrd}')
-        else:
-            return repr(f'Missmatch Word: should be {self.gold_wrd}, instead {self.model_wrd}')
+        return repr(f'Missmatch Word: should be {self.gold_wrd}, instead {self.model_wrd}')
 
 
 class UnexpectedTokenizationException(Exception):
@@ -294,6 +459,16 @@ class UnexpectedTokenizationException(Exception):
     def __str__(self):
         return repr(f'Unexpected tokenization difference: hand corrected version tokenized more. '
                     f'gold: {self.gold_split}. model: {self.model_split}')
+
+
+class MissingPOSTagException(Exception):
+    def __init__(self, word):
+        self.word = word
+
+    def __str__(self):
+        return repr(f'{self.word} is missing a POS tag')
+
+# TODO: what are the pos that needs the most correcting
 
 # model = rd.ParsedTextgrid('Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid')
 # gold = rd.ParsedTextgrid('Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid')

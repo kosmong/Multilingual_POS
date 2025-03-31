@@ -5,6 +5,8 @@ import Write_Data as Write
 import Multilingual_POS as MPOS
 import pandas as pd
 import nltk
+import sklearn_crfsuite
+from sklearn_crfsuite import metrics
 
 CSV_FOLDER = "Prat data/tagged_interviews_csv/"
 TEXTGRID_FOLDER = "Prat data/interview_textgrids_iu_and_cs_intervals/"
@@ -45,8 +47,21 @@ FILES_NAMES = ["VF19A_English_I1_20181114",
                "VM25B_English_I1_20200224",
                "VM34A_English_I2_20191028"]
 
+corrected_files = ["Prat data/corrected_tagged_textgrid/POS_VM19A_DT_English_I1_20191031.TextGrid",
+                   "Prat data/corrected_tagged_textgrid/POS_VM19B_DT_English_I2_20191104.TextGrid",
+                   "Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid",
+                   "Prat data/corrected_tagged_textgrid/Regan_POS_VM24A_English_I1_20181209.TextGrid",
+                   "Prat data/corrected_tagged_textgrid/SW_POS_VF19D_English_I2_20190308.TextGrid"]
+model_files = ["Prat data/tagged_interviews_textgrid/POS_VM19A_English_I1_20191031.TextGrid",
+               "Prat data/tagged_interviews_textgrid/POS_VM19B_English_I2_20191104.TextGrid",
+               "Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid",
+               "Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid",
+               "Prat data/tagged_interviews_textgrid/POS_VF19D_English_I2_20190308.TextGrid"]
+
 min = 0
-print("xmin = " + str(min) + " ")
+
+
+# print("xmin = " + str(min) + " ")
 
 
 # parsed = Read.ParsedTextgrid("Prat data/interview_textgrids_iu_and_cs_intervals/VF19A_English_I1_20181114.TextGrid")
@@ -54,13 +69,115 @@ print("xmin = " + str(min) + " ")
 
 
 def main():
-    """read textgrid, add preliminary POS tagging into the convienience-UI tier, write textgrid"""
-    for filename in FILES_NAMES:
-        old_parsed = Read.ParsedTextgrid(TEXTGRID_FOLDER + filename + ".TextGrid")
-        # Write.write_data(old_parsed, HUGGINGFACE_FOLDER + "POS_hf_" + filename + ".TextGrid", 'huggingface')
-        Write.write_data(old_parsed, TAGGED_FOLDER + "POS_" + filename + ".TextGrid")
+    # # read textgrid, add preliminary POS tagging into the convienience-UI tier, write textgrid
+    # for filename in FILES_NAMES:
+    #     old_parsed = Read.ParsedTextgrid(TEXTGRID_FOLDER + filename + ".TextGrid")
+    #     # Write.write_data(old_parsed, HUGGINGFACE_FOLDER + "POS_hf_" + filename + ".TextGrid", 'huggingface')
+    #     Write.write_data(old_parsed, TAGGED_FOLDER + "POS_" + filename + ".TextGrid")
+
+    # for i in range(len(model_files)):
+    #     get_correction_counts(model_files[i], corrected_files[i])
+
+    # try the model
+    # first, get corpus: hand tagged sentences
+    corpus = []
+    for filename in corrected_files:
+        # name = TAGGED_FOLDER + "POS_" + filename + ".TextGrid"
+        gold_grid = Read.ParsedTextgrid(filename)
+        cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
+        for j in range(len(cUI_intervals)):
+            pairs = MPOS.tagged_words_to_pairs(cUI_intervals[j].get_text().split(') '))
+            if not (len(pairs) == 1 and pairs[0][0] == "" and pairs[0][1] == ""):
+                corpus.append(pairs)
+
+    # print(len(corpus))
+    # print(corpus[0])
+
+    X = []
+    y = []
+    for sentence in corpus:
+        X_sentence = []
+        y_sentence = []
+        for i in range(len(sentence)):
+            X_sentence.append(MPOS.word_features(sentence, i))
+            y_sentence.append(sentence[i][1])
+        X.append(X_sentence)
+        y.append(y_sentence)
+
+    # print(len(X), len(y))
+    # print(len(X[0]), len(y[0]))
+    # print(X[0], y[0])
+
+    split = int(0.8 * len(X))
+    X_train = X[:split]
+    y_train = y[:split]
+    X_test = X[split:]
+    y_test = y[split:]
+
+    # Train a CRF model on the training data
+    crf = sklearn_crfsuite.CRF(
+        algorithm='lbfgs',
+        c1=0.1,
+        c2=0.1,
+        max_iterations=10000,
+        all_possible_transitions=True
+    )
+    crf.fit(X_train, y_train)
+
+    # Make predictions on the test data and evaluate the performance
+    y_pred = crf.predict(X_test)
+
+    print(metrics.flat_accuracy_score(y_test, y_pred))
 
 
+
+
+def get_correction_counts(model, gold):
+    # Compare the tagged textgrid of nltk to gold standard, print counts
+    model_grid = Read.ParsedTextgrid(model)
+    gold_grid = Read.ParsedTextgrid(gold)
+
+    model_cUI_intervals = model_grid.get_tiers()[2].get_intervals()
+    gold_cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
+    # print(len(model_cUI_intervals), len(gold_cUI_intervals))
+    assert len(model_cUI_intervals) == len(gold_cUI_intervals)
+
+    correct_count = 0
+    incorrect_count = 0
+    bad_split_count = 0
+    csw_count = 0
+    repeated_count = 0
+    disfluencies = 0
+    correction_index = []
+    for i in range(len(model_cUI_intervals)):
+        model_text = model_cUI_intervals[i].get_text()
+        gold_text = gold_cUI_intervals[i].get_text()
+
+        # print(i)
+        result = MPOS.find_text_diff(model_text, gold_text)
+        correct = result[0]
+        incorrect = result[1]
+        bad_split = result[2]
+        csw = result[3]
+        repeated = result[4]
+        disfluency = result[5]
+        if incorrect > 0:
+            correction_index.append(i + 1)
+        correct_count += correct
+        incorrect_count += incorrect
+        bad_split_count += bad_split
+        csw_count += csw
+        repeated_count += repeated
+        disfluencies += disfluency
+
+    print(f"Correct = {correct_count}\n"
+          f"Incorrect = {incorrect_count}\n"
+          f"Bad split = {bad_split_count}\n"
+          f"Code switch count = {csw_count}\n"
+          f"Repeated = {repeated_count}\n"
+          f"Disfluency = {disfluencies}\n"
+          f"Correct Percent = {correct_count / (correct_count + incorrect_count)}\n"
+          f"Corrections in: {correction_index}")
 
 
 if __name__ == "__main__":

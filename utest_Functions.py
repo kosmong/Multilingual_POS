@@ -185,8 +185,10 @@ class TestMPOS(unittest.TestCase):
         # case2a: gold < model, need recombination, successful
         case2a_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB)"
         case2a_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC)"
-        correct2a, incorrect2a, bad_split2a = MPOS.find_text_diff(case2a_model_sentence, case2a_gold_sentence)
-        print(correct2a, incorrect2a, bad_split2a)
+        result2a = MPOS.find_text_diff(case2a_model_sentence, case2a_gold_sentence)
+        correct2a = result2a[0]
+        incorrect2a = result2a[1]
+        bad_split2a = result2a[2]
         assert correct2a == 4
         assert incorrect2a == 4
         assert bad_split2a == 1
@@ -194,7 +196,10 @@ class TestMPOS(unittest.TestCase):
         # case2amany: many successful
         case2amany_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) long(JJ) ma(JJ) zhi(JJ)"
         case2amany_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) long ma zhi(JJ)"
-        correct2amany, incorrect2amany, bad_split2amany = MPOS.find_text_diff(case2amany_model_sentence, case2amany_gold_sentence)
+        result2amany = MPOS.find_text_diff(case2amany_model_sentence, case2amany_gold_sentence)
+        correct2amany = result2amany[0]
+        incorrect2amany = result2amany[1]
+        bad_split2amany = result2amany[2]
         print(correct2amany, incorrect2amany, bad_split2amany)
         assert correct2amany == 5
         assert incorrect2amany == 4
@@ -206,7 +211,9 @@ class TestMPOS(unittest.TestCase):
         with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
             MPOS.find_text_diff(case2b_model_sentence, case2b_gold_sentence)
         exception2b = miss_wrd.exception
-        assert exception2b.model_wrd != ""
+        print(exception2b.model_wrd)
+        print(exception2b.gold_wrd)
+        assert exception2b.model_wrd == "hong pong"
 
         # case2bmany: many but one does not work, so should fail at the end
         case2bmany_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) bing(NN) num(NN)"
@@ -215,7 +222,9 @@ class TestMPOS(unittest.TestCase):
             MPOS.find_text_diff(case2bmany_model_sentence, case2bmany_gold_sentence)
         exception2bmany = miss_wrd.exception
         assert "hong kong la" != exception2bmany.model_wrd
-        assert "bing" == exception2bmany.model_wrd
+        print(exception2bmany.model_wrd)
+        print(exception2bmany.gold_wrd)
+        assert "bing num" == exception2bmany.model_wrd
 
         # case2c: missing a word to combine, exception thrown
         case2c_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) ling(NN)"
@@ -223,23 +232,50 @@ class TestMPOS(unittest.TestCase):
         with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
             MPOS.find_text_diff(case2c_model_sentence, case2c_gold_sentence)
         exceptionc = miss_wrd.exception
-        assert exceptionc.model_wrd == ""
+        print(exceptionc.model_wrd)
+        print(exceptionc.gold_wrd)
+        assert exceptionc.model_wrd == "ling"
 
         # case3: no need for recombination
         case3_model_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
         case3_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) bing lum(NN)"
-        correct3, incorrect3, bad_split3 = MPOS.find_text_diff(case3_model_sentence, case3_gold_sentence)
+        result3 = MPOS.find_text_diff(case3_model_sentence, case3_gold_sentence)
+        correct3 = result3[0]
+        incorrect3 = result3[1]
+        bad_split3 = result3[2]
         assert correct3 == 9
         assert incorrect3 == 0
         assert bad_split3 == 0
 
+        # case4: recombination success and tags are a subset eg. NN and NNP
+        case4_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NN) um(DIS) i(RB) well(RB)"
+        case4_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC)"
+        result4 = MPOS.find_text_diff(case4_model_sentence, case4_gold_sentence)
+        correct4 = result4[0]
+        incorrect4 = result4[1]
+        bad_split4 = result4[2]
+        assert correct4 == 5
+        assert incorrect4 == 3
+        assert bad_split4 == 1
+
+        # case4many: many successful
+        case4many_model_sentence = "uh(NN) i(NN) 'm(VBP) from(IN) hong(NN) kong(NN) la(NNP) um(DIS) i(RB) well(RB) long(JJ) ma(JJ) zhi(JJ)"
+        case4many_gold_sentence = "uh(DIS) i(NN) 'm(VBP) from(IN) hong kong la(NNP) um(DIS) i(PRP) well(CC) long ma zhi(JJR)"
+        result4many = MPOS.find_text_diff(case4many_model_sentence, case4many_gold_sentence)
+        correct4many = result4many[0]
+        incorrect4many = result4many[1]
+        bad_split4many = result4many[2]
+        assert correct4many == 5
+        assert incorrect4many == 4
+        assert bad_split4many == 2
+
     def test_combine_adjacent(self):
         """test combine_adjacent function
         case 1: cannot recombine adjacent words, they do not match the word of gold standard
-        case 2: no need to recombine adjacent words. should not happen, as function should only be called if model word is a substring of gold word
-                TODO: do we need an exception for this?
+        case 2: no need to recombine adjacent words, just return original word
         case 3: recombination is a success! also tags matches, only 1 tag, also include multiple cont
-        case 4: recombination success but tags does not match, many tags"""
+        case 4: recombination success but tags does not match, many tags
+        case 5: missing word, we reached the end of  pairs, throuw missingwordexception"""
 
         # case1: cannot find correct recombine
         case1_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("pong", "NN")]
@@ -255,7 +291,8 @@ class TestMPOS(unittest.TestCase):
         case2_pos = 4
         result2_pair, offset2 = MPOS.combine_adjacent(case2_mpairs, case2_gpairs, case2_pos, case2_pos)
         print(result2_pair, offset2)
-        assert offset2 == -1
+        assert offset2 == 0
+        assert case2_gpairs[case2_pos] == result2_pair
 
         # case3: successful recombination, correct tag
         case3a_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NN"), ("kong", "NN")]
@@ -275,25 +312,39 @@ class TestMPOS(unittest.TestCase):
         assert case3b_gpairs[case3b_pos] == result3b_pair
         assert offset3b == 2
 
-        # successful recombination, incorrect tags
-        case4a_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NNP"), ("kong", "NN")]
-        case4a_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong", "NN")]
+        # successful recombinations, incorrect tags
+        case4a_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "JJ"), ("kong", "JJ")]
+        case4a_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong", "NNP")]
         case4a_pos = 4
         result4a_pair, offset4a = MPOS.combine_adjacent(case4a_mpairs, case4a_gpairs, case4a_pos, case4a_pos)
         print(result4a_pair, offset4a)
         assert case4a_gpairs[case4a_pos][0] == result4a_pair[0]
         assert case4a_gpairs[case4a_pos][1] != result4a_pair[1]
+        assert result4a_pair[1] == "JJ"
+        assert not MPOS.is_subclass(result4a_pair[1], case4a_gpairs[case4a_pos][1])
         assert offset4a == 1
 
         case4b_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NNP"), ("kong", "NN"),
                          ("la", "NN")]
-        case4b_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong la", "NN")]
+        case4b_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong la", "NNP")]
         case4b_pos = 4
         result4b_pair, offset4b = MPOS.combine_adjacent(case4b_mpairs, case4b_gpairs, case4b_pos, case4b_pos)
         print(result4b_pair, offset4b)
         assert case4b_gpairs[case4b_pos][0] == result4b_pair[0]
         assert case4b_gpairs[case4b_pos][1] != result4b_pair[1]
+        assert result4b_pair[1] == "-1"
+        assert not MPOS.is_subclass(result4b_pair[1], case4b_gpairs[case4b_pos][1])
         assert offset4b == 2
+
+        # unsuccessful recombination, missing word, reached the end of pairs
+        case5_mpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong", "NNP"), ("kong", "NN")]
+        case5_gpairs = [("i", "NN"), ("was", "VBD"), ("born", "VBN"), ("in", "IN"), ("hong kong la", "NNP")]
+        case5_pos = 4
+        with self.assertRaises(MPOS.MissingWordException) as miss_wrd:
+            MPOS.combine_adjacent(case5_mpairs, case5_gpairs, case5_pos, case5_pos)
+        assert miss_wrd.exception.gold_wrd == case5_gpairs[case5_pos][0]
+        assert miss_wrd.exception.model_wrd == "hong kong"
+
 
         # TODO: add case of multiple recombinations needed
         # TODO: add case of middle of recombination eg. "i(NN) was(VBP) in(IN) hong kong(NNP) for gon(NN) ba(NN) la(NN)"
