@@ -14,8 +14,8 @@ upper = string.ascii_uppercase
 symbols = []
 # TODO more place names:
 PLACE_NAMES = ["hong kong", "vancouver", "toronto", "japan", "canada", "greater vancouver area", "tokyo", "nagano",
-               "hiroshima", "miyajima", "iwakuni", "osaka", "langara college", "mong kok", "ubc", "bcit", "sfu",
-               "montreal", "burnaby", "mcgill university", "mcgill", "ut", "china", "singapore", "ontario", "queens"]
+               "hiroshima", "miyajima", "iwakuni", "osaka", "langara", "mong kok", "ubc", "bcit", "sfu",
+               "montreal", "burnaby", "mcgill", "ut", "china", "singapore", "ontario", "queens"]
 
 
 # REQUIRES: the symbol always signify a disfluency and never appears by itself
@@ -162,19 +162,22 @@ def make_csw_count(mcount_df: pd.DataFrame):
 # TODO: find how far disfluency or repeated words is from a code switch
 def find_text_diff(model_generated: str, gold_standard: str):
     # first find number of words and if it is the same for both
-    model_split = model_generated.split(') ')
-    gold_split = gold_standard.split(') ')
-    len_m = len(model_split)
-    len_g = len(gold_split)
+    # model_split = model_generated.split(') ')
+    # gold_split = gold_standard.split(') ')
+    # len_m = len(model_split)
+    # len_g = len(gold_split)
 
+    # # turn the word and tag back into pairs
+    # model_pairs = tagged_words_to_pairs(model_split)
+    # gold_pairs = tagged_words_to_pairs(gold_split)
+    model_pairs = model_generated
+    gold_pairs = gold_standard
+    len_m = len(model_pairs)
+    len_g = len(gold_pairs)
     # assume that human tagged data will put words together such as names
     # so will have less or equal words
     if len_g > len_m:
-        raise UnexpectedTokenizationException(gold_split, model_split)
-
-    # turn the word and tag back into pairs
-    model_pairs = tagged_words_to_pairs(model_split)
-    gold_pairs = tagged_words_to_pairs(gold_split)
+        raise UnexpectedTokenizationException(gold_pairs, model_pairs)
 
     # for each pair, compare word
     # assume gold standard does not tokenize incorrectly
@@ -219,22 +222,7 @@ def find_text_diff(model_generated: str, gold_standard: str):
         # if model word is part of gold word, split is bad
         # check word bf and after and if combined is same, then check tag
         # else throw exception, missing word
-        # elif model_wrd in gold_wrd:
-        #     bad_split += 1
-        #     # test if the word can be combined with word after
-        #     # check if the length is different
-        #     # TODO: behaviour might change when we compare hugginface, they split based on subwords
-        #     if next_wrd == gold_wrd:
-        #         if next_tag == gold_tag:
-        #             correct += 1
-        #         elif is_subclass(next_tag, gold_tag):
-        #             correct += 1
-        #         else:
-        #             incorrect += 1
-        #     else:
-        #         print(gold_standard)
-        #         print(model_generated)
-        #         raise MissingWordException(gold_wrd, model_wrd)
+        # TODO: behaviour might change when we compare hugginface, they split based on subwords
         else:
             # print(gold_standard)
             # print(model_generated)
@@ -258,19 +246,19 @@ def find_text_diff(model_generated: str, gold_standard: str):
             code_switch_count += 1
             code_switch_wrd.append(gold_wrd)
 
-            # find if it co-occurs with repeated or disfluencies
-            if repeated_count != 0:
-                print(gold_wrd, (repeated_wrds[repeated_count - 1], repeated_counts[repeated_count - 1]))
-            if disfluency_count != 0:
-                print(gold_wrd, prev_dis)
+            # # find if it co-occurs with repeated or disfluencies
+            # if repeated_count != 0:
+            #     print(gold_wrd, (repeated_wrds[repeated_count - 1], repeated_counts[repeated_count - 1]))
+            # if disfluency_count != 0:
+            #     print(gold_wrd, prev_dis)
 
         # handle disfluencies
         if gold_tag in ["DIS", "FW", "UH"]:
             disfluency_count += 1
             prev_dis = gold_wrd
 
-    if code_switch_count > 0:
-        print(code_switch_wrd)
+    # if code_switch_count > 0:
+        # print(code_switch_wrd)
     return [correct, incorrect, bad_split, code_switch_count, repeated_count, disfluency_count]
 
 
@@ -281,7 +269,7 @@ def tagged_words_to_pairs(tagged_wrds: [str]):
         if len(entry) == 1:
             e = entry[0].replace(" ", "")
             if e == "":
-                pairs.append((e, e))
+                continue
             else:
                 raise MissingPOSTagException(e)
         else:
@@ -324,6 +312,27 @@ def combine_adjacent(model_pairs, gold_pairs, model_pos: int, gold_pos: int):
         offset += 1
 
     return (model_substring, model_tag), -1
+
+
+def combine_words(tokens, place, word, pos):
+    substring = word
+    offset = 0
+    for i in range(pos, len(tokens)):
+        # place name found
+        if substring == place:
+            break
+
+        # cannot find place name
+        if i >= len(tokens)-1 or substring not in place:
+            substring = word
+            offset = 0
+            break
+
+        # combine with next
+        substring = substring + ' ' + tokens[i+1]
+        offset += 1
+
+    return substring, offset
 
 
 def is_subclass(model_tag, gold_tag):
@@ -401,10 +410,9 @@ def word_features(tag_sentence, i):
     tag = wrd_tag_pair[1]
     features = {
         'word': word,
-        'tag': tag,
+        # 'tag': tag,
         'is_first': i == 0,
         'is_last': i == len(tag_sentence) - 1,
-        'is_place': word in PLACE_NAMES,
         # prefix of the word
         'prefix-1': "" if word == "" else word[0],
         'prefix-2': "" if word == "" else word[:2],
@@ -413,32 +421,98 @@ def word_features(tag_sentence, i):
         'suffix-1': "" if word == "" else word[-1],
         'suffix-2': "" if word == "" else word[-2:],
         'suffix-3': "" if word == "" else word[-3:],
-        # extracting previous word and tag
+
+        # custom features
+        # extracting previous word
         'prev_word': '' if i == 0 else tag_sentence[i - 1][0],
-        'prev_tag': '' if i == 0 else tag_sentence[i - 1][1],
-        # extracting next word and tag
+        # extracting next word
         'next_word': '' if i == len(tag_sentence) - 1 else tag_sentence[i + 1][0],
-        'next_tag': '' if i == len(tag_sentence) - 1 else tag_sentence[i + 1][1],
         # disfluencies, code switches, repeated words
-        'is_code_switch': word.isascii(),
-        'distance_to_code_switch': find_closest_csw(tag_sentence, i),
-        'is_disfluency': tag in ["DIS", "FW", "UH"],
-        'distance_to_disfluency': find_closest_dis(tag_sentence, i),
-        'distance_to_repeated': find_closest_repeated(tag_sentence, i)
+        'is_code_switch': not word.isascii(),
+        'is_disfluency': word in ["mmm", "mnmm", "mmhm", "mm", "ahh", "huh", "umm", "mhm", "um"] or "&" in word,
+        'is_label': "@" in word or "＠" in word,
+        # placenames
+        'is_place': word in PLACE_NAMES
     }
 
     return features
 
 
-# test feature extractor
-# print(word_features([("", "")], 0))
-# r = word_features([("i", "NN"), ("like", "VPB"), ("um", "DIS"), ("um", "DIS"), ("apple", "NN")], 2)
-# print(r)
+def preprocess(data):
+    """recombine disfluency and label tags & and @
+    recombine place names"""
+    sym = ["&", "@", "＠"]
+
+    recombined_sentences = []
+    for sentence in data:
+        tokens = nltk.word_tokenize(sentence)
+        recombined_tokens = []
+        total_offset = 0
+        for i in range(len(tokens)):
+            if i+total_offset >= len(tokens):
+                break
+            wrd = tokens[i+total_offset]
+            if wrd == "":
+                continue
+
+            # recombine with next word if the word is part of sym
+            if wrd in sym:
+                wrd = wrd + tokens[i+total_offset+1]
+                total_offset += 1
+
+            # check if word is part of a place name, if yes, try and recombine
+            for place in PLACE_NAMES:
+                if wrd in place and len(wrd) > 1:
+                    wrd, offset = combine_words(tokens, place, wrd, i+total_offset)
+                    total_offset += offset
+
+            recombined_tokens.append(wrd)
+        recombined_sentences.append(recombined_tokens)
+    return recombined_sentences
+
+# sent = ["until i was i was born here in vancouver and i move to hong kong when i was three cuz my parents are from hong kong "]
+# recom = preprocess(sent)
+# print(recom)
+
+def preliminary_tag(preprocess):
+    """Take each sentence in corpus and tag them
+    RETURN: corpus of tagged sentences"""
+    tagged_corpus = []
+    for sentence in preprocess:
+        tagged_sentence = nltk.pos_tag(sentence)
+        tagged_corpus.append(tagged_sentence)
+
+    return tagged_corpus
 
 
-# print("古箏".isascii())
-# print("@m".isascii())
-# print("&m".isascii())
+def correction_crf(tagged_corpus):
+    X = []
+    y = []
+    for sentence in tagged_corpus:
+        X_sentence = []
+        y_sentence = []
+        for i in range(len(sentence)):
+            X_sentence.append(word_features(sentence, i))
+            y_sentence.append(sentence[i][1])
+        X.append(X_sentence)
+        y.append(y_sentence)
+
+    # Train a CRF model on the training data
+    crf = sklearn_crfsuite.CRF(
+        algorithm='lbfgs',
+        c1=0.1,
+        c2=0.1,
+        max_iterations=10000,
+        all_possible_transitions=True
+    )
+    crf.fit(X, y)
+
+    # Make predictions on the test data and evaluate the performance
+    # y_pred = crf.predict(X_test)
+    #
+    # print(metrics.flat_accuracy_score(y_test, y_pred))
+    return crf
+
 
 # Exception classes
 class MissingWordException(Exception):
@@ -468,8 +542,9 @@ class MissingPOSTagException(Exception):
     def __str__(self):
         return repr(f'{self.word} is missing a POS tag')
 
-# TODO: what are the pos that needs the most correcting
 
+
+# TODO: what are the pos that needs the most correcting
 # model = rd.ParsedTextgrid('Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid')
 # gold = rd.ParsedTextgrid('Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid')
 # model_generated = model.get_tiers()[2].get_intervals()[3].get_text()

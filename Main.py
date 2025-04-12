@@ -52,11 +52,11 @@ corrected_files = ["Prat data/corrected_tagged_textgrid/POS_VM19A_DT_English_I1_
                    "Prat data/corrected_tagged_textgrid/POS_VM24A_DT_Correct_English_I1_20181209_DT_Edited.TextGrid",
                    "Prat data/corrected_tagged_textgrid/Regan_POS_VM24A_English_I1_20181209.TextGrid",
                    "Prat data/corrected_tagged_textgrid/SW_POS_VF19D_English_I2_20190308.TextGrid"]
-model_files = ["Prat data/tagged_interviews_textgrid/POS_VM19A_English_I1_20191031.TextGrid",
-               "Prat data/tagged_interviews_textgrid/POS_VM19B_English_I2_20191104.TextGrid",
-               "Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid",
-               "Prat data/tagged_interviews_textgrid/POS_VM24A_English_I1_20181209.TextGrid",
-               "Prat data/tagged_interviews_textgrid/POS_VF19D_English_I2_20190308.TextGrid"]
+model_files = ["Prat data/interview_textgrids_iu_and_cs_intervals/VM19A_English_I1_20191031.TextGrid",
+               "Prat data/interview_textgrids_iu_and_cs_intervals/VM19B_English_I2_20191104.TextGrid",
+               "Prat data/interview_textgrids_iu_and_cs_intervals/VM24A_English_I1_20181209.TextGrid",
+               "Prat data/interview_textgrids_iu_and_cs_intervals/VM24A_English_I1_20181209.TextGrid",
+               "Prat data/interview_textgrids_iu_and_cs_intervals/VF19D_English_I2_20190308.TextGrid"]
 
 min = 0
 
@@ -75,27 +75,32 @@ def main():
     #     # Write.write_data(old_parsed, HUGGINGFACE_FOLDER + "POS_hf_" + filename + ".TextGrid", 'huggingface')
     #     Write.write_data(old_parsed, TAGGED_FOLDER + "POS_" + filename + ".TextGrid")
 
-    # for i in range(len(model_files)):
-    #     get_correction_counts(model_files[i], corrected_files[i])
+    for i in range(len(model_files)):
+        get_correction_counts(model_files[i], corrected_files[i])
+    # total_counts()
 
-    # try the model
-    # first, get corpus: hand tagged sentences
-    corpus = []
+    data = []
+    for file in FILES_NAMES:
+        filename = (TEXTGRID_FOLDER + file + ".TextGrid")
+        textgrid = Read.ParsedTextgrid(filename)
+        cUI = textgrid.get_tiers()[2].get_intervals()
+        for j in range(len(cUI)):
+            sentence = cUI[j].get_text()
+            data.append(sentence)
+    crf = pipeline_train(data)
+
+    X = []
+    y = []
+    test_corp = []
     for filename in corrected_files:
-        # name = TAGGED_FOLDER + "POS_" + filename + ".TextGrid"
         gold_grid = Read.ParsedTextgrid(filename)
         cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
         for j in range(len(cUI_intervals)):
             pairs = MPOS.tagged_words_to_pairs(cUI_intervals[j].get_text().split(') '))
             if not (len(pairs) == 1 and pairs[0][0] == "" and pairs[0][1] == ""):
-                corpus.append(pairs)
+                test_corp.append(pairs)
 
-    # print(len(corpus))
-    # print(corpus[0])
-
-    X = []
-    y = []
-    for sentence in corpus:
+    for sentence in test_corp:
         X_sentence = []
         y_sentence = []
         for i in range(len(sentence)):
@@ -104,10 +109,6 @@ def main():
         X.append(X_sentence)
         y.append(y_sentence)
 
-    # print(len(X), len(y))
-    # print(len(X[0]), len(y[0]))
-    # print(X[0], y[0])
-
     split = int(0.8 * len(X))
     X_train = X[:split]
     y_train = y[:split]
@@ -115,19 +116,18 @@ def main():
     y_test = y[split:]
 
     # Train a CRF model on the training data
-    crf = sklearn_crfsuite.CRF(
+    crf_gold = sklearn_crfsuite.CRF(
         algorithm='lbfgs',
         c1=0.1,
         c2=0.1,
         max_iterations=10000,
         all_possible_transitions=True
     )
-    crf.fit(X_train, y_train)
-
-    # Make predictions on the test data and evaluate the performance
-    y_pred = crf.predict(X_test)
-
-    print(metrics.flat_accuracy_score(y_test, y_pred))
+    crf_gold.fit(X_train, y_train)
+    y_pred_prelim = crf.predict(X_test)
+    y_pred_gold = crf_gold.predict(X_test)
+    print(metrics.flat_accuracy_score(y_test, y_pred_prelim))
+    print(metrics.flat_accuracy_score(y_test, y_pred_gold))
 
 
 
@@ -139,8 +139,18 @@ def get_correction_counts(model, gold):
 
     model_cUI_intervals = model_grid.get_tiers()[2].get_intervals()
     gold_cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
-    # print(len(model_cUI_intervals), len(gold_cUI_intervals))
     assert len(model_cUI_intervals) == len(gold_cUI_intervals)
+    model_data = []
+    gold_data = []
+    for j in range(len(model_cUI_intervals)):
+        sentence_m = model_cUI_intervals[j].get_text()
+        model_data.append(sentence_m)
+        sentence_g = MPOS.tagged_words_to_pairs(gold_cUI_intervals[j].get_text().split(') '))
+        gold_data.append(sentence_g)
+
+    pre_m = MPOS.preprocess(model_data)
+    tagged_m = MPOS.preliminary_tag(pre_m)
+    tagged_g = gold_data
 
     correct_count = 0
     incorrect_count = 0
@@ -150,8 +160,8 @@ def get_correction_counts(model, gold):
     disfluencies = 0
     correction_index = []
     for i in range(len(model_cUI_intervals)):
-        model_text = model_cUI_intervals[i].get_text()
-        gold_text = gold_cUI_intervals[i].get_text()
+        model_text = tagged_m[i]
+        gold_text = tagged_g[i]
 
         # print(i)
         result = MPOS.find_text_diff(model_text, gold_text)
@@ -176,9 +186,157 @@ def get_correction_counts(model, gold):
           f"Code switch count = {csw_count}\n"
           f"Repeated = {repeated_count}\n"
           f"Disfluency = {disfluencies}\n"
-          f"Correct Percent = {correct_count / (correct_count + incorrect_count)}\n"
-          f"Corrections in: {correction_index}")
+          f"Correct Percent = {correct_count / (correct_count + incorrect_count)}\n")
+          # f"Corrections in: {correction_index}")
 
+
+def total_counts():
+    code_switch_count = 0
+    disfluency_count = 0
+    repeated_count = 0
+    total_word = 0
+    co_occurrences = {"csw_csw": 0, "csw_dis": 0, "csw_rep": 0}
+    continuous_csw = []
+    csw_tags = {}
+    for filename in FILES_NAMES:
+        grid = Read.ParsedTextgrid(TAGGED_FOLDER + "POS_" + filename + ".TextGrid")
+
+        cUI_intervals = grid.get_tiers()[2].get_intervals()
+        for j in range(len(cUI_intervals)):
+            pairs = MPOS.tagged_words_to_pairs(cUI_intervals[j].get_text().split(') '))
+            prev = None
+            cont_csw = 0
+            had_csw = False
+            had_dis = False
+            had_rep = False
+            for pair in pairs:
+                wrd = pair[0]
+                tag = pair[1]
+
+                # handle code switches
+                if not wrd.isascii():
+                    code_switch_count += 1
+                    had_csw = True
+                    if had_csw:
+                        co_occurrences["csw_csw"] += 1
+                    if had_dis:
+                        co_occurrences["csw_dis"] += 1
+                    if had_rep:
+                        co_occurrences["csw_rep"] += 1
+                    if prev is not None and not prev[0].isascii():
+                        cont_csw += 1
+                    if tag in csw_tags:
+                        csw_tags[tag] += 1
+                    else:
+                        csw_tags.update({tag: 1})
+
+
+                # handle disfluencies
+                if tag in ["DIS", "FW", "UH"]:
+                    disfluency_count += 1
+                    had_dis = True
+
+                # handle repeated
+                if prev is not None and wrd == prev[0]:
+                    repeated_count += 1
+                    had_rep = True
+
+                prev = pair
+                total_word += 1
+            if cont_csw > 5:
+                continuous_csw.append(pairs)
+
+    print(f"Code switch = {code_switch_count}\n"
+          f"Disfluency = {disfluency_count}\n"
+          f"Repeated = {repeated_count}\n"
+          f"Csw with Csw = {co_occurrences["csw_csw"]}\n"
+          f"Csw with Dis = {co_occurrences["csw_dis"]}\n"
+          f"Csw with Rep = {co_occurrences["csw_rep"]}\n"
+          f"Continuous csw = {continuous_csw}\n"
+          f"Csw tags = {csw_tags}\n"
+          f"Total = {total_word}")
+
+
+def try_model():
+    # try the model
+    # first, get corpus: hand tagged sentences
+    corpus = []
+    for filename in FILES_NAMES:
+        filename = TAGGED_FOLDER + "POS_" + filename + ".TextGrid"
+        gold_grid = Read.ParsedTextgrid(filename)
+        cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
+        for j in range(len(cUI_intervals)):
+            pairs = MPOS.tagged_words_to_pairs(cUI_intervals[j].get_text().split(') '))
+            if not (len(pairs) == 1 and pairs[0][0] == "" and pairs[0][1] == ""):
+                corpus.append(pairs)
+
+    X = []
+    y = []
+    for sentence in corpus:
+        X_sentence = []
+        y_sentence = []
+        for i in range(len(sentence)):
+            X_sentence.append(MPOS.word_features(sentence, i))
+            y_sentence.append(sentence[i][1])
+        X.append(X_sentence)
+        y.append(y_sentence)
+
+    # print(len(X), len(y))
+    # print(len(X[0]), len(y[0]))
+    # print(X[0], y[0])
+
+    # split = int(0.8 * len(X))
+    # X_train = X[:split]
+    # y_train = y[:split]
+    # X_test = X[split:]
+    # y_test = y[split:]
+    X_train = X
+    y_train = y
+
+    X_test = []
+    y_test = []
+    test_corp = []
+    for filename in corrected_files:
+        gold_grid = Read.ParsedTextgrid(filename)
+        cUI_intervals = gold_grid.get_tiers()[2].get_intervals()
+        for j in range(len(cUI_intervals)):
+            pairs = MPOS.tagged_words_to_pairs(cUI_intervals[j].get_text().split(') '))
+            if not (len(pairs) == 1 and pairs[0][0] == "" and pairs[0][1] == ""):
+                test_corp.append(pairs)
+
+    for sentence in test_corp:
+        X_sentence = []
+        y_sentence = []
+        for i in range(len(sentence)):
+            X_sentence.append(MPOS.word_features(sentence, i))
+            y_sentence.append(sentence[i][1])
+        X_test.append(X_sentence)
+        y_test.append(y_sentence)
+
+    # Train a CRF model on the training data
+    crf = sklearn_crfsuite.CRF(
+        algorithm='lbfgs',
+        c1=0.1,
+        c2=0.1,
+        max_iterations=10000,
+        all_possible_transitions=True
+    )
+    crf.fit(X_train, y_train)
+
+    # Make predictions on the test data and evaluate the performance
+    y_pred = crf.predict(X_test)
+
+    print(metrics.flat_accuracy_score(y_test, y_pred))
+
+
+# pipeline_train takes in the data as a list of sentences
+# it preprocesses the sentences, preliminarily tag it, then train a crf using the tagged sentences
+# returns the trained crf
+def pipeline_train(data):
+    preprocessed = MPOS.preprocess(data)
+    corpus = MPOS.preliminary_tag(preprocessed)
+    crf = MPOS.correction_crf(corpus)
+    return crf
 
 if __name__ == "__main__":
     main()
